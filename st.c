@@ -47,6 +47,8 @@
 				term.scr + HISTSIZE + 1) % HISTSIZE] : \
 				term.line[(y) - term.scr])
 #define TLINE_HIST(y)           ((y) <= HISTSIZE-term.row+2 ? term.hist[(y)] : term.line[(y-HISTSIZE+term.row-3)])
+#define CAR_PER_ARG   4
+
 
 enum term_mode {
 	MODE_WRAP        = 1 << 0,
@@ -148,6 +150,8 @@ typedef struct {
 	int arg[ESC_ARG_SIZ];
 	int narg;              /* nb of args */
 	char mode[2];
+	int carg[ESC_ARG_SIZ][CAR_PER_ARG]; /* colon args */
+
 } CSIEscape;
 
 /* STR Escape sequence structs */
@@ -191,6 +195,7 @@ static int tlinelen(int);
 static void tmoveto(int, int);
 static void tmoveato(int, int);
 static void tnewline(int);
+static void readcolonargs(char **, int, int[][CAR_PER_ARG]);
 static void tputtab(int);
 static void tputc(Rune);
 static void treset(void);
@@ -1217,7 +1222,27 @@ tnewline(int first_col)
 	}
 	tmoveto(first_col ? 0 : term.c.x, y);
 }
+void
+readcolonargs(char **p, int cursor, int params[][CAR_PER_ARG])
+{
+	int i = 0;
+	for (; i < CAR_PER_ARG; i++)
+		params[cursor][i] = -1;
 
+	if (**p != ':')
+		return;
+
+	char *np = NULL;
+	i = 0;
+
+	while (**p == ':' && i < CAR_PER_ARG) {
+		while (**p == ':')
+			(*p)++;
+		params[cursor][i] = strtol(*p, &np, 10);
+		*p = np;
+		i++;
+	}
+}
 void
 csiparse(void)
 {
@@ -1240,6 +1265,7 @@ csiparse(void)
 			v = -1;
 		csiescseq.arg[csiescseq.narg++] = v;
 		p = np;
+		readcolonargs(&p, csiescseq.narg-1, csiescseq.carg);
 		if (*p != ';' || csiescseq.narg == ESC_ARG_SIZ)
 			break;
 		p++;
@@ -1448,18 +1474,22 @@ tsetattr(const int *attr, int l)
 	for (i = 0; i < l; i++) {
 		switch (attr[i]) {
 		case 0:
-			term.c.attr.mode &= ~(
-				ATTR_BOLD       |
-				ATTR_FAINT      |
-				ATTR_ITALIC     |
-				ATTR_UNDERLINE  |
-				ATTR_BLINK      |
-				ATTR_REVERSE    |
-				ATTR_INVISIBLE  |
-				ATTR_STRUCK     );
-			term.c.attr.fg = defaultfg;
-			term.c.attr.bg = defaultbg;
-			break;
+		term.c.attr.mode &= ~(
+			ATTR_BOLD       |
+			ATTR_FAINT      |
+			ATTR_ITALIC     |
+			ATTR_UNDERLINE  |
+			ATTR_BLINK      |
+			ATTR_REVERSE    |
+			ATTR_INVISIBLE  |
+			ATTR_STRUCK     );
+		term.c.attr.fg = defaultfg;
+		term.c.attr.bg = defaultbg;
+		term.c.attr.ustyle = -1;
+		term.c.attr.ucolor[0] = -1;
+		term.c.attr.ucolor[1] = -1;
+		term.c.attr.ucolor[2] = -1;
+		break;
 		case 1:
 			term.c.attr.mode |= ATTR_BOLD;
 			break;
@@ -1469,9 +1499,20 @@ tsetattr(const int *attr, int l)
 		case 3:
 			term.c.attr.mode |= ATTR_ITALIC;
 			break;
-		case 4:
-			term.c.attr.mode |= ATTR_UNDERLINE;
-			break;
+			case 4:
+		   // Default to regular underline (1) if no style specified
+		   term.c.attr.ustyle = (csiescseq.carg[i][0] == -1) ? 1 : csiescseq.carg[i][0];
+    
+		   // Debug print to see what style is being set
+		   fprintf(stderr, "Setting underline style: %d\n", term.c.attr.ustyle);
+		   
+		   if (term.c.attr.ustyle != 0)
+			   term.c.attr.mode |= ATTR_UNDERLINE;
+		   else
+			   term.c.attr.mode &= ~ATTR_UNDERLINE;
+		   
+		   term.c.attr.mode ^= ATTR_DIRTYUNDERLINE;
+		   break;
 		case 5: /* slow blink */
 			/* FALLTHROUGH */
 		case 6: /* rapid blink */
@@ -1521,6 +1562,21 @@ tsetattr(const int *attr, int l)
 		case 49:
 			term.c.attr.bg = defaultbg;
 			break;
+			case 58:  // Set underline color
+    term.c.attr.ucolor[0] = csiescseq.carg[i][1];
+    term.c.attr.ucolor[1] = csiescseq.carg[i][2];
+    term.c.attr.ucolor[2] = csiescseq.carg[i][3];
+    // Add debug print to see what values are being set
+    fprintf(stderr, "Setting underline color: %d, %d, %d\n", 
+            term.c.attr.ucolor[0], term.c.attr.ucolor[1], term.c.attr.ucolor[2]);
+    term.c.attr.mode ^= ATTR_DIRTYUNDERLINE;
+    break;
+case 59:  // Reset underline color
+    term.c.attr.ucolor[0] = -1;
+    term.c.attr.ucolor[1] = -1;
+    term.c.attr.ucolor[2] = -1;
+    term.c.attr.mode ^= ATTR_DIRTYUNDERLINE;
+    break;
 		default:
 			if (BETWEEN(attr[i], 30, 37)) {
 				term.c.attr.fg = attr[i] - 30;

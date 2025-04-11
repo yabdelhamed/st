@@ -20,6 +20,10 @@
 
 #define TRUECOLOR(r,g,b)	(1 << 24 | (r) << 16 | (g) << 8 | (b))
 #define IS_TRUECOL(x)		(1 << 24 & (x))
+#define ATTR_DIRTYUNDERLINE 1 << 15
+
+
+
 
 enum glyph_attribute {
 	ATTR_NULL       = 0,
@@ -68,6 +72,8 @@ typedef struct {
 	ushort mode;      /* attribute flags */
 	uint32_t fg;      /* foreground  */
 	uint32_t bg;      /* background  */
+	int ustyle;      /* underline style */
+    int ucolor[3];   /* underline color */
 } Glyph;
 
 typedef Glyph *Line;
