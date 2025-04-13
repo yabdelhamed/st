@@ -1821,7 +1821,7 @@ else {
         free(arcs);
 #elif UNDERCURL_STYLE == UNDERCURL_SPIKY
         // Make the underline corridor larger
-        wh *= 4 ;
+        wh *= 1 ;
 
         // Set the angle of the slope to 45°
         ww = wh;
