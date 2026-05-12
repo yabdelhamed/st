@@ -94,6 +94,7 @@ void draw(void);
 void externalpipe(const Arg *);
 void kscrolldown(const Arg *);
 void kscrollup(const Arg *);
+int tinscrollback(void);
 
 void printscreen(const Arg *);
 void printsel(const Arg *);
