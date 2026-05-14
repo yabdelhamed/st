@@ -882,9 +882,6 @@ void
 ttywrite(const char *s, size_t n, int may_echo)
 {
 	const char *next;
-	Arg arg = (Arg) { .i = term.scr };
-
-	kscrolldown(&arg);
 
 	if (may_echo && IS_SET(MODE_ECHO)){
 
@@ -1109,6 +1106,13 @@ kscrolldown(const Arg* a)
 {
 	int n = a->i;
 
+	if (IS_SET(MODE_ALTSCREEN)) {
+		int count = n > 0 ? n : 1;
+		while (count--)
+			ttywrite("\033[B", 3, 1);
+		return;
+	}
+
 	if (n < 0)
 		n = term.row + n;
 
@@ -1126,6 +1130,13 @@ void
 kscrollup(const Arg* a)
 {
 	int n = a->i;
+
+	if (IS_SET(MODE_ALTSCREEN)) {
+		int count = n > 0 ? n : 1;
+		while (count--)
+			ttywrite("\033[A", 3, 1);
+		return;
+	}
 
 	if (n < 0)
 		n = term.row + n;
