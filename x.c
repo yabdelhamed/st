@@ -2463,6 +2463,14 @@ reallocbuf:
 		// so it is not as critical
 		len = XLookupString(e, buf, buf_size, &ksym, NULL);
 	}
+
+	/* Return snaps scrollback to the bottom without forwarding the key */
+	if ((ksym == XK_Return || ksym == XK_KP_Enter) && tinscrollback()) {
+		Arg jump = { .i = INT_MAX };
+		kscrolldown(&jump);
+		goto cleanup;
+	}
+
 	/* 1. shortcuts */
 	for (bp = shortcuts; bp < shortcuts + LEN(shortcuts); bp++) {
 		if (ksym == bp->keysym && match(bp->mod, e->state)) {
