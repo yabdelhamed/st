@@ -1,42 +1,46 @@
-# Enhanced st - a simple terminal with Undercurl Support
+# st - simple terminal, enhanced
 
-This is an enhanced fork of [Luke Smith's build](https://github.com/LukeSmithxyz/st) of the [suckless terminal (st)](https://st.suckless.org/) with additional features that make it even better, particularly for Neovim users.
+A customized build of the [suckless terminal (st)](https://st.suckless.org/) with undercurl rendering, clickable URLs, smarter scrollback, and quality-of-life fixes — particularly nice for Neovim users.
 
-## My Enhancements
+## Features
 
-* **Undercurl support** - Proper undercurl rendering with customizable styles and colors
-* **Color-coded diagnostics** - Excellent visual feedback for code errors and spell checking
-* **Full integration with Neovim** - Works perfectly with Neovim's diagnostic and spellchecking features
+### Mouse
 
-## Original Features (from Luke's build)
+* **Ctrl+click a URL** - opens it in your default browser (`xdg-open`). Works on wrapped URLs and inside scrollback.
+* **Ctrl+click a number/ID** - copies the token to the clipboard: ports, IPs, git hashes, container IDs, UUIDs. Paste with `ctrl-v` elsewhere or `alt-v` in st.
+* **Hand cursor on hover** - hold `ctrl` and the pointer turns into a hand over anything clickable.
+* **Mouse wheel scrollback** - scroll up through history; inside TUI apps (vim, less, man) the wheel is passed to the app instead.
 
-* **URL functionality** - Follow URLs by pressing `alt-l` and copy them with `alt-y`
-* **Clipboard integration** - Copy the output of commands with `alt-o`
-* **Scrollback** with `alt-↑/↓` or `alt-pageup/down` or `shift` while scrolling with the mouse
-* **Vim-bindings** - Scroll up/down in history with `alt-k` and `alt-j`
-* **Font-size adjustment** - Zoom in/out with `alt+shift+j/k` or `alt+shift+up/down`
-* **Clipboard handling** - Copy text with `alt-c`, paste with `alt-v` or `shift-insert`
-* **Xresources/pywal integration** - Dynamic colors
-* **Default gruvbox theme** - Pleasing aesthetics out of the box
-* **Transparency support** - Adjustable via Xresources
+### Scrollback
 
-## Patches Included
+* **Stays where you put it** - typing no longer snaps the view back to the bottom.
+* **Return jumps to bottom** - press `Enter` while scrolled up to snap back to the prompt; the keypress is consumed, so no stray empty command.
+* **Keyboard scrolling** - `alt-↑/↓`, `alt-pageup/down`, `alt-k/j` (vim style), or `shift` + mouse wheel.
+* **Selection works in history** - select and copy text anywhere in scrollback; it copies what you see.
 
-* **Undercurl patch** - Adds support for wavy underline rendering in 3 styles (spiky, curly, capped)
-* Boxdraw
-* Ligatures
-* font2
-* Latest version updates
+### Rendering
+
+* **Undercurl support** - wavy underline rendering in 3 styles (spiky, curly, capped) with per-color support; great with Neovim diagnostics and spell checking.
+* **Boxdraw** - pixel-perfect box-drawing and powerline glyphs.
+* **Ligatures** - via HarfBuzz.
+* **font2** - fallback fonts, including emoji.
+* **Default gruvbox theme** with Xresources/pywal overrides.
+
+### Clipboard & misc
+
+* **URL helpers** - follow URLs on screen with `alt-l`, copy them with `alt-y`.
+* **Copy command output** with `alt-o`.
+* **Copy/paste** - `alt-c` / `alt-v`, or `shift-insert`.
+* **Font-size adjustment** - zoom with `alt+shift+j/k` or `alt+shift+up/down`.
+* **Opaque by default** - `alpha = 1.0`; let your compositor (picom) handle window transparency, or set `*.alpha` in Xresources for built-in translucency.
 
 ## Undercurl Configuration
 
-This build includes three different undercurl styles that can be configured in `config.h`:
+Three undercurl styles, configured in `config.h`:
 
-1. **Spiky** (default) - Zigzag pattern that looks great for error highlighting
-2. **Curly** - A more rounded wavy pattern
-3. **Capped** - A hybrid style with straight lines and capped ends
-
-To change styles, edit the `UNDERCURL_STYLE` definition in `config.h`:
+1. **Spiky** - zigzag pattern, great for error highlighting
+2. **Curly** - a more rounded wavy pattern
+3. **Capped** - a hybrid style with straight lines and capped ends
 
 ```c
 // Available styles
@@ -44,12 +48,10 @@ To change styles, edit the `UNDERCURL_STYLE` definition in `config.h`:
 #define UNDERCURL_SPIKY 1
 #define UNDERCURL_CAPPED 2
 // Active style
-#define UNDERCURL_STYLE UNDERCURL_SPIKY
+#define UNDERCURL_STYLE UNDERCURL_CAPPED
 ```
 
 ## Using Undercurls in Neovim
-
-To take full advantage of the undercurl support in Neovim, add the following to your Neovim config:
 
 ```lua
 vim.opt.termguicolors = true
@@ -83,37 +85,34 @@ vim.cmd([[
 
 ## Installation
 
-You need to have xlib header files and libharfbuzz build files installed.
+You need xlib header files, harfbuzz, and fribidi build files installed.
 
 ```
-git clone https://github.com/yourusername/st
+git clone https://github.com/YoussefSakkaan/st
 cd st
 sudo make install
 ```
 
-On OpenBSD, be sure to edit `config.mk` first and remove `-lrt` from the
-`$LIBS` before compiling.
+On OpenBSD, edit `config.mk` first and remove `-lrt` from `$LIBS` before compiling.
 
-Be sure to have a composite manager (`xcompmgr`, `picom`, etc.) running if you want transparency.
+If you want window transparency, run a composite manager (`picom`, `xcompmgr`, etc.).
 
 ## Configuration with Xresources
 
-For many key variables, this build of `st` will look for X settings set in either `~/.Xdefaults` or `~/.Xresources`. You must run `xrdb` on one of these files to load the settings.
-
-For example, you can define your desired fonts, transparency or colors:
+For many key variables, this build looks for X settings in either `~/.Xdefaults` or `~/.Xresources` (or wherever your setup loads them from). Run `xrdb` on the file to load the settings.
 
 ```
-*.font:	Liberation Mono:pixelsize=12:antialias=true:autohint=true;
-*.alpha: 0.9
+*.font: monospace:pixelsize=10:antialias=true:autohint=true
+*.alpha: 1.0
 *.color0: #111
 ...
 ```
 
 ### Color Settings Priority
 
-1. Default: Gruvbox colors
-2. If Xresources colors are defined, those will be used
-3. If `wal` has run in your session, its colors will take highest priority
+1. Default: gruvbox colors
+2. If Xresources colors are defined, those are used
+3. If `wal` has run in your session, its colors take highest priority
 
 ## Troubleshooting Undercurls
 
@@ -126,9 +125,7 @@ If undercurls don't appear correctly:
 
 ## Credits
 
-- Original st by [suckless.org](https://st.suckless.org/)
-- Luke Smith's [fork](https://github.com/LukeSmithxyz/st)
-- Undercurl implementation inspired by various terminal emulators
+Based on [st from suckless.org](https://st.suckless.org/) and community patches (scrollback, boxdraw, ligatures, alpha, undercurl).
 
 ## License
 
