@@ -114,6 +114,7 @@ void resettitle(void);
 
 void selclear(void);
 void selinit(void);
+char *tgetword(int, int);
 void selstart(int, int, int);
 void selextend(int, int, int, int);
 int selected(int, int);

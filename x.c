@@ -5,6 +5,7 @@
 #include <locale.h>
 #include <signal.h>
 #include <sys/select.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include <libgen.h>
@@ -207,6 +208,10 @@ static void selclear_(XEvent *);
 static void selrequest(XEvent *);
 static void setsel(char *, Time);
 static void mousesel(XEvent *, int);
+static void openurl(const char *);
+static char *clicktarget(int, int, int *);
+static int ctrlclick(int, int);
+static void krelease(XEvent *);
 static void mousereport(XEvent *);
 static char *kmap(KeySym, uint);
 static int match(uint, uint);
@@ -226,6 +231,7 @@ static void (*handler[LASTEvent])(XEvent *) = {
 	[MotionNotify] = bmotion,
 	[ButtonPress] = bpress,
 	[ButtonRelease] = brelease,
+	[KeyRelease] = krelease,
 /*
  * Uncomment if you want the selection to disappear when you select something
  * different in another window.
@@ -279,6 +285,9 @@ static char *opt_name  = NULL;
 static char *opt_title = NULL;
 
 static int focused = 0;
+
+static Cursor defaultcursor, handcursor;
+static int handcursoron;
 
 static int oldbutton = 3; /* button event on startup: 3 = release */
 static uint buttons; /* bit field of pressed buttons */
@@ -508,6 +517,86 @@ mouseaction(XEvent *e, uint release)
 }
 
 void
+openurl(const char *url)
+{
+	pid_t chld;
+	char buf[2048];
+
+	/* bare www. tokens need a scheme for xdg-open */
+	if (strncmp(url, "www.", 4) == 0) {
+		snprintf(buf, sizeof(buf), "http://%s", url);
+		url = buf;
+	}
+
+	/* double fork so the opener is reparented to init; sigchld only
+	 * reaps the shell, anything else would linger as a zombie */
+	switch (chld = fork()) {
+	case -1:
+		return;
+	case 0:
+		if (fork() == 0) {
+			setsid();
+			execlp("xdg-open", "xdg-open", url, (char *)NULL);
+			_exit(1);
+		}
+		_exit(0);
+	default:
+		waitpid(chld, NULL, 0);
+	}
+}
+
+/* token under (col, row) if it's actionable: a url or contains a digit.
+ * sets *isurl accordingly; caller frees. NULL if nothing clickable. */
+char *
+clicktarget(int col, int row, int *isurl)
+{
+	char *word, *p;
+
+	if ((word = tgetword(col, row)) == NULL)
+		return NULL;
+
+	if (strstr(word, "://") || strncmp(word, "www.", 4) == 0) {
+		*isurl = 1;
+		return word;
+	}
+
+	*isurl = 0;
+	for (p = word; *p; p++) {
+		if (BETWEEN(*p, '0', '9'))
+			return word;
+	}
+
+	free(word);
+	return NULL;
+}
+
+int
+ctrlclick(int col, int row)
+{
+	char *word, *p;
+	int isurl;
+	Atom clipboard;
+
+	if ((word = clicktarget(col, row, &isurl)) == NULL)
+		return 0;
+
+	if (isurl) {
+		/* drop trailing punctuation that ends up glued to urls */
+		for (p = word + strlen(word) - 1;
+		     p > word && strchr(".,;:!?", *p); p--)
+			*p = '\0';
+		openurl(word);
+		free(word);
+	} else {
+		free(xsel.clipboard);
+		xsel.clipboard = word;
+		clipboard = XInternAtom(xw.dpy, "CLIPBOARD", 0);
+		XSetSelectionOwner(xw.dpy, clipboard, xw.win, CurrentTime);
+	}
+	return 1;
+}
+
+void
 bpress(XEvent *e)
 {
 	int btn = e->xbutton.button;
@@ -524,6 +613,11 @@ bpress(XEvent *e)
 
 	if (mouseaction(e, 0))
 		return;
+
+	if (btn == Button1 && (e->xbutton.state & ControlMask)) {
+		if (ctrlclick(evcol(e), evrow(e)))
+			return;
+	}
 
 	if (btn == Button1) {
 		/*
@@ -755,15 +849,45 @@ brelease(XEvent *e)
 		mousesel(e, 1);
 }
 
+static void
+sethandcursor(int on)
+{
+	if (on == handcursoron)
+		return;
+	handcursoron = on;
+	XDefineCursor(xw.dpy, xw.win, on ? handcursor : defaultcursor);
+}
+
 void
 bmotion(XEvent *e)
 {
+	char *word;
+	int isurl;
+
 	if (IS_SET(MODE_MOUSE) && !(e->xbutton.state & forcemousemod)) {
 		mousereport(e);
 		return;
 	}
 
+	/* hand cursor while ctrl-hovering something clickable */
+	if ((e->xbutton.state & ControlMask) && !(buttons & 1)) {
+		word = clicktarget(evcol(e), evrow(e), &isurl);
+		sethandcursor(word != NULL);
+		free(word);
+	} else {
+		sethandcursor(0);
+	}
+
 	mousesel(e, 0);
+}
+
+void
+krelease(XEvent *e)
+{
+	KeySym ksym = XLookupKeysym(&e->xkey, 0);
+
+	if (ksym == XK_Control_L || ksym == XK_Control_R)
+		sethandcursor(0);
 }
 
 void
@@ -1330,7 +1454,8 @@ xinit(int cols, int rows)
 	xw.attrs.bit_gravity = NorthWestGravity;
 	xw.attrs.event_mask = FocusChangeMask | KeyPressMask | KeyReleaseMask
 		| ExposureMask | VisibilityChangeMask | StructureNotifyMask
-		| ButtonMotionMask | ButtonPressMask | ButtonReleaseMask;
+		| ButtonMotionMask | ButtonPressMask | ButtonReleaseMask
+		| PointerMotionMask;
 	xw.attrs.colormap = xw.cmap;
 
 	xw.win = XCreateWindow(xw.dpy, parent, xw.l, xw.t,
@@ -1358,7 +1483,8 @@ xinit(int cols, int rows)
 	}
 
 	/* white cursor, black outline */
-	cursor = XCreateFontCursor(xw.dpy, mouseshape);
+	cursor = defaultcursor = XCreateFontCursor(xw.dpy, mouseshape);
+	handcursor = XCreateFontCursor(xw.dpy, XC_hand2);
 	XDefineCursor(xw.dpy, xw.win, cursor);
 
 	if (XParseColor(xw.dpy, xw.cmap, colorname[mousefg], &xmousefg) == 0) {
@@ -1374,6 +1500,7 @@ xinit(int cols, int rows)
 	}
 
 	XRecolorCursor(xw.dpy, cursor, &xmousefg, &xmousebg);
+	XRecolorCursor(xw.dpy, handcursor, &xmousefg, &xmousebg);
 
 	xw.xembed = XInternAtom(xw.dpy, "_XEMBED", False);
 	xw.wmdeletewin = XInternAtom(xw.dpy, "WM_DELETE_WINDOW", False);
@@ -2308,7 +2435,8 @@ unmap(XEvent *ev)
 void
 xsetpointermotion(int set)
 {
-	MODBIT(xw.attrs.event_mask, set, PointerMotionMask);
+	/* motion events stay on for the ctrl-hover hand cursor */
+	MODBIT(xw.attrs.event_mask, 1, PointerMotionMask);
 	XChangeWindowAttributes(xw.dpy, xw.win, CWEventMask, &xw.attrs);
 }
 

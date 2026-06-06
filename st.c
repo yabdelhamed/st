@@ -682,6 +682,78 @@ selclear(void)
 	tsetdirt(sel.nb.y, sel.ne.y);
 }
 
+static int
+istokendelim(Rune u)
+{
+	return u == 0 || u == ' ' ||
+	       (u < 128 && strchr("\"'`<>(){}[]|", (int)u) != NULL);
+}
+
+/*
+ * Extract the delimiter-bounded token under screen position (col, row),
+ * following wrapped lines in both directions. Reads through TLINE so it
+ * also works while scrolled into history. Caller frees.
+ */
+char *
+tgetword(int col, int row)
+{
+	int x1 = col, y1 = row, x2 = col, y2 = row;
+	int x, y, cells;
+	char *word, *p;
+	const Glyph *gp;
+
+	if (istokendelim(TLINE(row)[col].u))
+		return NULL;
+
+	for (;;) {
+		if (x1 > 0) {
+			if (istokendelim(TLINE(y1)[x1-1].u))
+				break;
+			x1--;
+		} else if (y1 > 0 && (TLINE(y1-1)[term.col-1].mode & ATTR_WRAP)) {
+			if (istokendelim(TLINE(y1-1)[term.col-1].u))
+				break;
+			y1--;
+			x1 = term.col - 1;
+		} else {
+			break;
+		}
+	}
+
+	for (;;) {
+		if (x2 < term.col - 1) {
+			if (istokendelim(TLINE(y2)[x2+1].u))
+				break;
+			x2++;
+		} else if (y2 < term.row - 1 && (TLINE(y2)[x2].mode & ATTR_WRAP)) {
+			if (istokendelim(TLINE(y2+1)[0].u))
+				break;
+			y2++;
+			x2 = 0;
+		} else {
+			break;
+		}
+	}
+
+	cells = (y2 - y1) * term.col + (x2 - x1) + 1;
+	p = word = xmalloc(cells * UTF_SIZ + 1);
+
+	for (x = x1, y = y1; ; ) {
+		gp = &TLINE(y)[x];
+		if (!(gp->mode & ATTR_WDUMMY))
+			p += utf8encode(gp->u, p);
+		if (y == y2 && x == x2)
+			break;
+		if (++x == term.col) {
+			x = 0;
+			y++;
+		}
+	}
+	*p = 0;
+
+	return word;
+}
+
 void
 die(const char *errstr, ...)
 {
