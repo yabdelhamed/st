@@ -47,7 +47,22 @@ git am /path/to/patches/*.diff
 make
 ```
 
-See [`patches/README.md`](patches/README.md) for what each patch does and which are original to this repo.
+| # | Patch | Origin | Description |
+|---|-------|--------|-------------|
+| 01 | [arabic-rtl](patches/01-st-arabic-rtl.diff) | **original** | Bidi reordering + Arabic shaping (joined letterforms, lam-alif, mirrored brackets) via fribidi |
+| 02 | [scrollback](patches/02-st-scrollback.diff) | suckless.org | Scrollback buffer with keyboard scrolling (prerequisite for 03-05) |
+| 03 | [scrollback-usability](patches/03-st-scrollback-usability.diff) | **original** | View stays put while typing, plain-wheel scrolling, wheel passthrough to TUI apps |
+| 04 | [scrollback-enterjump](patches/04-st-scrollback-enterjump.diff) | **original** | Enter snaps scrollback to the bottom without reaching the shell |
+| 05 | [ctrlclick](patches/05-st-ctrlclick.diff) | **original** | Ctrl+click opens URLs, copies numeric/ID tokens; hand cursor on hover |
+| 06 | [xresources](patches/06-st-xresources.diff) | suckless.org | Colors, font and more loadable from Xresources |
+| 07 | [alpha](patches/07-st-alpha.diff) | suckless.org | Background opacity |
+| 08 | [font2](patches/08-st-font2.diff) | suckless.org | Fallback font list (emoji, Arabic) |
+| 09 | [boxdraw](patches/09-st-boxdraw.diff) | suckless.org | Pixel-perfect box-drawing and braille glyphs |
+| 10 | [ligatures](patches/10-st-ligatures.diff) | suckless.org | HarfBuzz programming ligatures |
+| 11 | [undercurl](patches/11-st-undercurl.diff) | suckless.org | SGR 4:1-4:5 underline styles + underline colors |
+| 12 | [config](patches/12-st-config.diff) | optional | Gruvbox, monospace 10, opaque bg, alt-based bindings |
+
+Community patches are adapted so the whole series applies cleanly in order; functionally unchanged. Details in [`patches/README.md`](patches/README.md).
 
 ## Installation
 
