@@ -60,3 +60,9 @@ st-ligatures (hbtransform-on-specs variant). HarfBuzz shaping for programming li
 ### 11-st-undercurl.diff
 
 st-undercurl-0.9-20240103. SGR `4:1`-`4:5` underline styles (straight, double, curly, spiky, capped) and 58/59 underline colors, plus the `Su` terminfo capability.
+
+## Configuration
+
+### 12-st-config.diff
+
+Optional. Gruvbox palette, monospace:size=10 with emoji/Arabic fallbacks, opaque background (alpha 1.0, `*.alpha` honored from Xresources), alt-based clipboard and scrollback bindings, capped undercurl. Skip it if you want stock defaults.
