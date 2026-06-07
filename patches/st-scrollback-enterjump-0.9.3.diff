@@ -1,0 +1,66 @@
+From 5ab85382fd3de4f465a5462bb0523e60efb406ae Mon Sep 17 00:00:00 2001
+From: joe sakkaan <ysakkaan@hotmail.com>
+Date: Sun, 7 Jun 2026 11:17:00 +0300
+Subject: [PATCH] return jumps scrollback to bottom
+
+First Enter/KP_Enter while viewing main-screen scrollback snaps the
+view to the bottom and is consumed, so no empty command reaches the
+shell. Subsequent presses behave normally. Alt-screen apps are
+unaffected. Requires the st-scrollback patch.
+---
+ st.c | 6 ++++++
+ st.h | 1 +
+ x.c  | 8 ++++++++
+ 3 files changed, 15 insertions(+)
+
+diff --git a/st.c b/st.c
+index f582647..8f2a644 100644
+--- a/st.c
++++ b/st.c
+@@ -1064,6 +1064,12 @@ tswapscreen(void)
+ 	tfulldirt();
+ }
+ 
++int
++tinscrollback(void)
++{
++	return !IS_SET(MODE_ALTSCREEN) && term.scr > 0;
++}
++
+ void
+ kscrolldown(const Arg* a)
+ {
+diff --git a/st.h b/st.h
+index 818a6f8..182a3a5 100644
+--- a/st.h
++++ b/st.h
+@@ -83,6 +83,7 @@ void draw(void);
+ 
+ void kscrolldown(const Arg *);
+ void kscrollup(const Arg *);
++int tinscrollback(void);
+ void printscreen(const Arg *);
+ void printsel(const Arg *);
+ void sendbreak(const Arg *);
+diff --git a/x.c b/x.c
+index f749eee..32f174a 100644
+--- a/x.c
++++ b/x.c
+@@ -1951,6 +1951,14 @@ kpress(XEvent *ev)
+ 	} else {
+ 		len = XLookupString(e, buf, sizeof buf, &ksym, NULL);
+ 	}
++
++	/* Return snaps scrollback to the bottom without forwarding the key */
++	if ((ksym == XK_Return || ksym == XK_KP_Enter) && tinscrollback()) {
++		Arg jump = { .i = INT_MAX };
++		kscrolldown(&jump);
++		return;
++	}
++
+ 	/* 1. shortcuts */
+ 	for (bp = shortcuts; bp < shortcuts + LEN(shortcuts); bp++) {
+ 		if (ksym == bp->keysym && match(bp->mod, e->state)) {
+-- 
+2.54.0
+
