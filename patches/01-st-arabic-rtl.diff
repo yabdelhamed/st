@@ -1,0 +1,154 @@
+From 6706eb14010406c8991bcbe2166116f64ccf06e9 Mon Sep 17 00:00:00 2001
+From: joe sakkaan <ysakkaan@hotmail.com>
+Date: Sun, 7 Jun 2026 11:14:24 +0300
+Subject: [PATCH] arabic rtl: bidi reordering and arabic shaping via fribidi
+
+Lines containing rtl runs are copied at draw time, reordered to
+visual order and arabic-shaped (joined forms, lam-alif ligatures,
+mirrored brackets) before rendering. Attributes travel with their
+characters. The terminal buffer keeps logical order, so selection
+copies the original text.
+---
+ config.mk |  6 ++--
+ x.c       | 92 +++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 96 insertions(+), 2 deletions(-)
+
+diff --git a/config.mk b/config.mk
+index 2fc854e..21ac843 100644
+--- a/config.mk
++++ b/config.mk
+@@ -15,10 +15,12 @@ PKG_CONFIG = pkg-config
+ # includes and libs
+ INCS = -I$(X11INC) \
+        `$(PKG_CONFIG) --cflags fontconfig` \
+-       `$(PKG_CONFIG) --cflags freetype2`
++       `$(PKG_CONFIG) --cflags freetype2` \
++       `$(PKG_CONFIG) --cflags fribidi`
+ LIBS = -L$(X11LIB) -lm -lrt -lX11 -lutil -lXft \
+        `$(PKG_CONFIG) --libs fontconfig` \
+-       `$(PKG_CONFIG) --libs freetype2`
++       `$(PKG_CONFIG) --libs freetype2` \
++       `$(PKG_CONFIG) --libs fribidi`
+ 
+ # flags
+ STCPPFLAGS = -DVERSION=\"$(VERSION)\" -D_XOPEN_SOURCE=600
+diff --git a/x.c b/x.c
+index d73152b..f749eee 100644
+--- a/x.c
++++ b/x.c
+@@ -14,6 +14,7 @@
+ #include <X11/keysym.h>
+ #include <X11/Xft/Xft.h>
+ #include <X11/XKBlib.h>
++#include <fribidi.h>
+ 
+ char *argv0;
+ #include "arg.h"
+@@ -1654,13 +1655,104 @@ xstartdraw(void)
+ 	return IS_SET(MODE_VISIBLE);
+ }
+ 
++static int
++isrtl(Rune u)
++{
++	return BETWEEN(u, 0x0590, 0x08FF) ||   /* hebrew, arabic + supplements */
++	       BETWEEN(u, 0xFB1D, 0xFDFF) ||   /* presentation forms a */
++	       BETWEEN(u, 0xFE70, 0xFEFF);     /* presentation forms b */
++}
++
++static int
++lineneedsbidi(const Glyph *g, int len)
++{
++	int i;
++
++	for (i = 0; i < len; i++) {
++		if (isrtl(g[i].u))
++			return 1;
++	}
++	return 0;
++}
++
++/*
++ * Reorder a line of glyphs to visual order and apply arabic contextual
++ * shaping (joined forms, lam-alif ligatures, mirrored brackets) via
++ * fribidi. Attributes travel with their characters so colors and
++ * underlines stay attached. Operates on a render-time copy only - the
++ * terminal buffer keeps logical order, so selection still copies the
++ * original text.
++ */
++static void
++applybidi(Glyph *g, int len)
++{
++	static FriBidiChar *log, *vis;
++	static FriBidiCharType *types;
++	static FriBidiLevel *levels;
++	static FriBidiJoiningType *jtypes;
++	static FriBidiStrIndex *map;
++	static Glyph *orig;
++	static int cap;
++	FriBidiParType base = FRIBIDI_PAR_ON;
++	int i;
++
++	if (len > cap) {
++		cap = len;
++		log = xrealloc(log, cap * sizeof(*log));
++		vis = xrealloc(vis, cap * sizeof(*vis));
++		types = xrealloc(types, cap * sizeof(*types));
++		levels = xrealloc(levels, cap * sizeof(*levels));
++		jtypes = xrealloc(jtypes, cap * sizeof(*jtypes));
++		map = xrealloc(map, cap * sizeof(*map));
++		orig = xrealloc(orig, cap * sizeof(*orig));
++	}
++
++	for (i = 0; i < len; i++) {
++		orig[i] = g[i];
++		log[i] = g[i].u ? g[i].u : ' ';
++	}
++
++	fribidi_get_bidi_types(log, len, types);
++	if (fribidi_get_par_embedding_levels(types, len, &base, levels) == 0)
++		return;
++	fribidi_get_joining_types(log, len, jtypes);
++	fribidi_join_arabic(types, len, levels, jtypes);
++	fribidi_shape(FRIBIDI_FLAGS_DEFAULT | FRIBIDI_FLAGS_ARABIC,
++	              levels, len, jtypes, log);
++
++	memcpy(vis, log, len * sizeof(*vis));
++	for (i = 0; i < len; i++)
++		map[i] = i;
++	if (fribidi_reorder_line(FRIBIDI_FLAGS_DEFAULT, types, len, 0,
++	                         base, levels, vis, map) == 0)
++		return;
++
++	for (i = 0; i < len; i++) {
++		g[i] = orig[map[i]];
++		g[i].u = vis[i];
++	}
++}
++
+ void
+ xdrawline(Line line, int x1, int y1, int x2)
+ {
++	static Glyph *bidibuf;
++	static int bidicap;
+ 	int i, x, ox, numspecs;
+ 	Glyph base, new;
+ 	XftGlyphFontSpec *specs = xw.specbuf;
+ 
++	/* reorder rtl text for display; needs the whole line for context */
++	if (lineneedsbidi(line, x2)) {
++		if (x2 > bidicap) {
++			bidicap = x2;
++			bidibuf = xrealloc(bidibuf, bidicap * sizeof(Glyph));
++		}
++		memcpy(bidibuf, line, x2 * sizeof(Glyph));
++		applybidi(bidibuf, x2);
++		line = bidibuf;
++	}
++
+ 	numspecs = xmakeglyphfontspecs(specs, &line[x1], x2 - x1, x1, y1);
+ 	i = ox = 0;
+ 	for (x = x1; x < x2 && i < numspecs; x++) {
+-- 
+2.54.0
+

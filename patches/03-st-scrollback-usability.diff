@@ -1,0 +1,78 @@
+From 0e9a4d8c1971519565a53262bfb0454fb46a0dd4 Mon Sep 17 00:00:00 2001
+From: joe sakkaan <ysakkaan@hotmail.com>
+Date: Sun, 7 Jun 2026 11:16:02 +0300
+Subject: [PATCH] scrollback usability: stay put while scrolled, wheel scroll,
+ tui passthrough
+
+On top of st-scrollback:
+
+- drop the kscrolldown call from ttywrite, which snapped the view to
+  the bottom on every keystroke. Selections started in scrollback also
+  silently retargeted to the bottom view when that fired mid-drag.
+- plain mouse wheel scrolls history (no shift needed).
+- on the alt screen, kscrollup/kscrolldown forward arrow sequences so
+  TUI apps (less, vim, man) scroll themselves instead of revealing
+  stale main-screen history.
+---
+ config.def.h |  2 ++
+ st.c         | 17 ++++++++++++++---
+ 2 files changed, 16 insertions(+), 3 deletions(-)
+
+diff --git a/config.def.h b/config.def.h
+index 40b7d93..61c576b 100644
+--- a/config.def.h
++++ b/config.def.h
+@@ -176,6 +176,8 @@ static uint forcemousemod = ShiftMask;
+  */
+ static MouseShortcut mshortcuts[] = {
+ 	/* mask                 button   function        argument       release */
++	{ XK_NO_MOD,            Button4, kscrollup,      {.i = 1} },
++	{ XK_NO_MOD,            Button5, kscrolldown,    {.i = 1} },
+ 	{ XK_ANY_MOD,           Button2, selpaste,       {.i = 0},      1 },
+ 	{ ShiftMask,            Button4, ttysend,        {.s = "\033[5;2~"} },
+ 	{ XK_ANY_MOD,           Button4, ttysend,        {.s = "\031"} },
+diff --git a/st.c b/st.c
+index 1295c37..f582647 100644
+--- a/st.c
++++ b/st.c
+@@ -851,9 +851,6 @@ void
+ ttywrite(const char *s, size_t n, int may_echo)
+ {
+ 	const char *next;
+-	Arg arg = (Arg) { .i = term.scr };
+-
+-	kscrolldown(&arg);
+ 
+ 	if (may_echo && IS_SET(MODE_ECHO))
+ 		twrite(s, n, 1);
+@@ -1072,6 +1069,13 @@ kscrolldown(const Arg* a)
+ {
+ 	int n = a->i;
+ 
++	if (IS_SET(MODE_ALTSCREEN)) {
++		int count = n > 0 ? n : 1;
++		while (count--)
++			ttywrite("\033[B", 3, 1);
++		return;
++	}
++
+ 	if (n < 0)
+ 		n = term.row + n;
+ 
+@@ -1090,6 +1094,13 @@ kscrollup(const Arg* a)
+ {
+ 	int n = a->i;
+ 
++	if (IS_SET(MODE_ALTSCREEN)) {
++		int count = n > 0 ? n : 1;
++		while (count--)
++			ttywrite("\033[A", 3, 1);
++		return;
++	}
++
+ 	if (n < 0)
+ 		n = term.row + n;
+ 
+-- 
+2.54.0
+

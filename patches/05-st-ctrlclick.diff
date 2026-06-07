@@ -1,0 +1,346 @@
+From ff2ad996d6b7d79687c08730158658c6b139be23 Mon Sep 17 00:00:00 2001
+From: joe sakkaan <ysakkaan@hotmail.com>
+Date: Sun, 7 Jun 2026 11:19:35 +0300
+Subject: [PATCH] ctrl+click: open urls in browser, copy numeric/id tokens to
+ clipboard
+
+Ctrl+Button1 extracts the token under the pointer (following wrapped
+lines, reads through TLINE so scrollback works too):
+
+- tokens containing :// or starting with www. open via xdg-open
+- tokens containing a digit (ports, IPs, git hashes, container ids,
+  UUIDs) are copied to the CLIPBOARD selection
+- plain words fall through to normal selection
+
+While Ctrl is held the pointer becomes a hand over clickable tokens
+and reverts on Ctrl release. PointerMotionMask stays on permanently
+for hover detection. Requires the st-scrollback patch (TLINE).
+---
+ st.c |  72 ++++++++++++++++++++++++++++++++
+ st.h |   1 +
+ x.c  | 133 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++--
+ 3 files changed, 203 insertions(+), 3 deletions(-)
+
+diff --git a/st.c b/st.c
+index 8f2a644..0fac6a5 100644
+--- a/st.c
++++ b/st.c
+@@ -653,6 +653,78 @@ selclear(void)
+ 	tsetdirt(sel.nb.y, sel.ne.y);
+ }
+ 
++static int
++istokendelim(Rune u)
++{
++	return u == 0 || u == ' ' ||
++	       (u < 128 && strchr("\"'`<>(){}[]|", (int)u) != NULL);
++}
++
++/*
++ * Extract the delimiter-bounded token under screen position (col, row),
++ * following wrapped lines in both directions. Reads through TLINE so it
++ * also works while scrolled into history. Caller frees.
++ */
++char *
++tgetword(int col, int row)
++{
++	int x1 = col, y1 = row, x2 = col, y2 = row;
++	int x, y, cells;
++	char *word, *p;
++	const Glyph *gp;
++
++	if (istokendelim(TLINE(row)[col].u))
++		return NULL;
++
++	for (;;) {
++		if (x1 > 0) {
++			if (istokendelim(TLINE(y1)[x1-1].u))
++				break;
++			x1--;
++		} else if (y1 > 0 && (TLINE(y1-1)[term.col-1].mode & ATTR_WRAP)) {
++			if (istokendelim(TLINE(y1-1)[term.col-1].u))
++				break;
++			y1--;
++			x1 = term.col - 1;
++		} else {
++			break;
++		}
++	}
++
++	for (;;) {
++		if (x2 < term.col - 1) {
++			if (istokendelim(TLINE(y2)[x2+1].u))
++				break;
++			x2++;
++		} else if (y2 < term.row - 1 && (TLINE(y2)[x2].mode & ATTR_WRAP)) {
++			if (istokendelim(TLINE(y2+1)[0].u))
++				break;
++			y2++;
++			x2 = 0;
++		} else {
++			break;
++		}
++	}
++
++	cells = (y2 - y1) * term.col + (x2 - x1) + 1;
++	p = word = xmalloc(cells * UTF_SIZ + 1);
++
++	for (x = x1, y = y1; ; ) {
++		gp = &TLINE(y)[x];
++		if (!(gp->mode & ATTR_WDUMMY))
++			p += utf8encode(gp->u, p);
++		if (y == y2 && x == x2)
++			break;
++		if (++x == term.col) {
++			x = 0;
++			y++;
++		}
++	}
++	*p = 0;
++
++	return word;
++}
++
+ void
+ die(const char *errstr, ...)
+ {
+diff --git a/st.h b/st.h
+index 182a3a5..1dc96f1 100644
+--- a/st.h
++++ b/st.h
+@@ -103,6 +103,7 @@ void resettitle(void);
+ 
+ void selclear(void);
+ void selinit(void);
++char *tgetword(int, int);
+ void selstart(int, int, int);
+ void selextend(int, int, int, int);
+ int selected(int, int);
+diff --git a/x.c b/x.c
+index 32f174a..b3e1d8c 100644
+--- a/x.c
++++ b/x.c
+@@ -5,6 +5,7 @@
+ #include <locale.h>
+ #include <signal.h>
+ #include <sys/select.h>
++#include <sys/wait.h>
+ #include <time.h>
+ #include <unistd.h>
+ #include <libgen.h>
+@@ -183,6 +184,10 @@ static void selclear_(XEvent *);
+ static void selrequest(XEvent *);
+ static void setsel(char *, Time);
+ static void mousesel(XEvent *, int);
++static void openurl(const char *);
++static char *clicktarget(int, int, int *);
++static int ctrlclick(int, int);
++static void krelease(XEvent *);
+ static void mousereport(XEvent *);
+ static char *kmap(KeySym, uint);
+ static int match(uint, uint);
+@@ -202,6 +207,7 @@ static void (*handler[LASTEvent])(XEvent *) = {
+ 	[MotionNotify] = bmotion,
+ 	[ButtonPress] = bpress,
+ 	[ButtonRelease] = brelease,
++	[KeyRelease] = krelease,
+ /*
+  * Uncomment if you want the selection to disappear when you select something
+  * different in another window.
+@@ -254,6 +260,8 @@ static char *opt_name  = NULL;
+ static char *opt_title = NULL;
+ 
+ static uint buttons; /* bit field of pressed buttons */
++static Cursor defaultcursor, handcursor;
++static int handcursoron;
+ 
+ void
+ clipcopy(const Arg *dummy)
+@@ -466,6 +474,86 @@ mouseaction(XEvent *e, uint release)
+ 	return 0;
+ }
+ 
++void
++openurl(const char *url)
++{
++	pid_t chld;
++	char buf[2048];
++
++	/* bare www. tokens need a scheme for xdg-open */
++	if (strncmp(url, "www.", 4) == 0) {
++		snprintf(buf, sizeof(buf), "http://%s", url);
++		url = buf;
++	}
++
++	/* double fork so the opener is reparented to init; sigchld only
++	 * reaps the shell, anything else would linger as a zombie */
++	switch (chld = fork()) {
++	case -1:
++		return;
++	case 0:
++		if (fork() == 0) {
++			setsid();
++			execlp("xdg-open", "xdg-open", url, (char *)NULL);
++			_exit(1);
++		}
++		_exit(0);
++	default:
++		waitpid(chld, NULL, 0);
++	}
++}
++
++/* token under (col, row) if it's actionable: a url or contains a digit.
++ * sets *isurl accordingly; caller frees. NULL if nothing clickable. */
++char *
++clicktarget(int col, int row, int *isurl)
++{
++	char *word, *p;
++
++	if ((word = tgetword(col, row)) == NULL)
++		return NULL;
++
++	if (strstr(word, "://") || strncmp(word, "www.", 4) == 0) {
++		*isurl = 1;
++		return word;
++	}
++
++	*isurl = 0;
++	for (p = word; *p; p++) {
++		if (BETWEEN(*p, '0', '9'))
++			return word;
++	}
++
++	free(word);
++	return NULL;
++}
++
++int
++ctrlclick(int col, int row)
++{
++	char *word, *p;
++	int isurl;
++	Atom clipboard;
++
++	if ((word = clicktarget(col, row, &isurl)) == NULL)
++		return 0;
++
++	if (isurl) {
++		/* drop trailing punctuation that ends up glued to urls */
++		for (p = word + strlen(word) - 1;
++		     p > word && strchr(".,;:!?", *p); p--)
++			*p = '\0';
++		openurl(word);
++		free(word);
++	} else {
++		free(xsel.clipboard);
++		xsel.clipboard = word;
++		clipboard = XInternAtom(xw.dpy, "CLIPBOARD", 0);
++		XSetSelectionOwner(xw.dpy, clipboard, xw.win, CurrentTime);
++	}
++	return 1;
++}
++
+ void
+ bpress(XEvent *e)
+ {
+@@ -484,6 +572,11 @@ bpress(XEvent *e)
+ 	if (mouseaction(e, 0))
+ 		return;
+ 
++	if (btn == Button1 && (e->xbutton.state & ControlMask)) {
++		if (ctrlclick(evcol(e), evrow(e)))
++			return;
++	}
++
+ 	if (btn == Button1) {
+ 		/*
+ 		 * If the user clicks below predefined timeouts specific
+@@ -714,17 +807,47 @@ brelease(XEvent *e)
+ 		mousesel(e, 1);
+ }
+ 
++static void
++sethandcursor(int on)
++{
++	if (on == handcursoron)
++		return;
++	handcursoron = on;
++	XDefineCursor(xw.dpy, xw.win, on ? handcursor : defaultcursor);
++}
++
+ void
+ bmotion(XEvent *e)
+ {
++	char *word;
++	int isurl;
++
+ 	if (IS_SET(MODE_MOUSE) && !(e->xbutton.state & forcemousemod)) {
+ 		mousereport(e);
+ 		return;
+ 	}
+ 
++	/* hand cursor while ctrl-hovering something clickable */
++	if ((e->xbutton.state & ControlMask) && !(buttons & 1)) {
++		word = clicktarget(evcol(e), evrow(e), &isurl);
++		sethandcursor(word != NULL);
++		free(word);
++	} else {
++		sethandcursor(0);
++	}
++
+ 	mousesel(e, 0);
+ }
+ 
++void
++krelease(XEvent *e)
++{
++	KeySym ksym = XLookupKeysym(&e->xkey, 0);
++
++	if (ksym == XK_Control_L || ksym == XK_Control_R)
++		sethandcursor(0);
++}
++
+ void
+ cresize(int width, int height)
+ {
+@@ -1166,7 +1289,8 @@ xinit(int cols, int rows)
+ 	xw.attrs.bit_gravity = NorthWestGravity;
+ 	xw.attrs.event_mask = FocusChangeMask | KeyPressMask | KeyReleaseMask
+ 		| ExposureMask | VisibilityChangeMask | StructureNotifyMask
+-		| ButtonMotionMask | ButtonPressMask | ButtonReleaseMask;
++		| ButtonMotionMask | ButtonPressMask | ButtonReleaseMask
++		| PointerMotionMask;
+ 	xw.attrs.colormap = xw.cmap;
+ 
+ 	root = XRootWindow(xw.dpy, xw.scr);
+@@ -1201,7 +1325,8 @@ xinit(int cols, int rows)
+ 	}
+ 
+ 	/* white cursor, black outline */
+-	cursor = XCreateFontCursor(xw.dpy, mouseshape);
++	cursor = defaultcursor = XCreateFontCursor(xw.dpy, mouseshape);
++	handcursor = XCreateFontCursor(xw.dpy, XC_hand2);
+ 	XDefineCursor(xw.dpy, xw.win, cursor);
+ 
+ 	if (XParseColor(xw.dpy, xw.cmap, colorname[mousefg], &xmousefg) == 0) {
+@@ -1217,6 +1342,7 @@ xinit(int cols, int rows)
+ 	}
+ 
+ 	XRecolorCursor(xw.dpy, cursor, &xmousefg, &xmousebg);
++	XRecolorCursor(xw.dpy, handcursor, &xmousefg, &xmousebg);
+ 
+ 	xw.xembed = XInternAtom(xw.dpy, "_XEMBED", False);
+ 	xw.wmdeletewin = XInternAtom(xw.dpy, "WM_DELETE_WINDOW", False);
+@@ -1822,7 +1948,8 @@ unmap(XEvent *ev)
+ void
+ xsetpointermotion(int set)
+ {
+-	MODBIT(xw.attrs.event_mask, set, PointerMotionMask);
++	/* motion events stay on for the ctrl-hover hand cursor */
++	MODBIT(xw.attrs.event_mask, 1, PointerMotionMask);
+ 	XChangeWindowAttributes(xw.dpy, xw.win, CWEventMask, &xw.attrs);
+ }
+ 
+-- 
+2.54.0
+
