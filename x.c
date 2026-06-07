@@ -1951,6 +1951,14 @@ kpress(XEvent *ev)
 	} else {
 		len = XLookupString(e, buf, sizeof buf, &ksym, NULL);
 	}
+
+	/* Return snaps scrollback to the bottom without forwarding the key */
+	if ((ksym == XK_Return || ksym == XK_KP_Enter) && tinscrollback()) {
+		Arg jump = { .i = INT_MAX };
+		kscrolldown(&jump);
+		return;
+	}
+
 	/* 1. shortcuts */
 	for (bp = shortcuts; bp < shortcuts + LEN(shortcuts); bp++) {
 		if (ksym == bp->keysym && match(bp->mod, e->state)) {

@@ -1064,6 +1064,12 @@ tswapscreen(void)
 	tfulldirt();
 }
 
+int
+tinscrollback(void)
+{
+	return !IS_SET(MODE_ALTSCREEN) && term.scr > 0;
+}
+
 void
 kscrolldown(const Arg* a)
 {
